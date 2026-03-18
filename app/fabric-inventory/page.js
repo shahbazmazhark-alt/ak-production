@@ -6,6 +6,7 @@ import { useToast } from '@/components/Toast'
 import { useAuth } from '@/components/AuthProvider'
 
 const COMMON_FABRICS = ['Cotton Net', 'Organza', 'Viscose', 'Raw Silk', 'Swiss Lawn', 'Tissue']
+const ADJUST_REASONS = ['Waste', 'Damage', 'Correction', 'Used in Production', 'Other']
 
 export default function FabricInventoryPage() {
   const toast = useToast()
@@ -23,7 +24,15 @@ export default function FabricInventoryPage() {
   const [stockNote, setStockNote] = useState('')
   const [saving, setSaving] = useState(false)
 
-  const canEdit = can(user, 'canEdit', 'fabric_inventory')
+  // Adjust form
+  const [adjFabric, setAdjFabric] = useState('')
+  const [adjYards, setAdjYards] = useState('')
+  const [adjDirection, setAdjDirection] = useState('subtract') // subtract | add
+  const [adjReason, setAdjReason] = useState('Waste')
+  const [adjNote, setAdjNote] = useState('')
+  const [adjSaving, setAdjSaving] = useState(false)
+
+  const canEdit = can(user, 'canEdit', 'fabric_inventory') || can(user, 'canCreate', 'fabric_inventory')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -38,13 +47,11 @@ export default function FabricInventoryPage() {
 
   useEffect(() => { load() }, [load])
 
-  // All fabric types from existing stock + common list
   const allFabricTypes = useMemo(() => {
     const fromStock = stock.map(s => s.fabric).filter(Boolean)
     return [...new Set([...COMMON_FABRICS, ...fromStock])].sort()
   }, [stock])
 
-  // Summary by fabric type
   const summary = useMemo(() => {
     const map = {}
     stock.forEach(s => {
@@ -65,9 +72,7 @@ export default function FabricInventoryPage() {
     setSaving(true)
     try {
       const { error } = await supabase.from('fabric_stock').insert({
-        fabric,
-        yards: Number(yards),
-        rate: rate ? Number(rate) : null,
+        fabric, yards: Number(yards), rate: rate ? Number(rate) : null,
         supplier: stockSupplier || null,
         po_ref: stockNote ? 'Manual: ' + stockNote : 'Manual entry',
         date_received: today(),
@@ -75,10 +80,39 @@ export default function FabricInventoryPage() {
       if (error) throw error
       toast(yards + ' yards of ' + fabric + ' added', 'success')
       setFabric(''); setYards(''); setRate(''); setStockSupplier(''); setStockNote('')
-      setTab('summary')
-      load()
+      setTab('summary'); load()
     } catch (err) { toast(err.message, 'error') }
     finally { setSaving(false) }
+  }
+
+  async function submitAdjustment(e) {
+    e.preventDefault()
+    if (!adjFabric || !adjYards) return toast('Fabric and yards required', 'error')
+    setAdjSaving(true)
+    try {
+      if (adjDirection === 'subtract') {
+        // Log as usage/adjustment
+        const { error } = await supabase.from('fabric_usage_log').insert({
+          fabric: adjFabric, yards: Number(adjYards),
+          type: adjReason, product_label: adjNote || adjReason,
+          date: today(),
+        })
+        if (error) throw error
+        toast(adjYards + ' yards subtracted — ' + adjReason, 'success')
+      } else {
+        // Add back to stock (correction)
+        const { error } = await supabase.from('fabric_stock').insert({
+          fabric: adjFabric, yards: Number(adjYards), rate: null,
+          supplier: null, po_ref: 'Adjustment: ' + (adjNote || adjReason),
+          date_received: today(),
+        })
+        if (error) throw error
+        toast(adjYards + ' yards added back — ' + adjReason, 'success')
+      }
+      setAdjFabric(''); setAdjYards(''); setAdjDirection('subtract'); setAdjReason('Waste'); setAdjNote('')
+      setTab('summary'); load()
+    } catch (err) { toast(err.message, 'error') }
+    finally { setAdjSaving(false) }
   }
 
   async function deleteEntry(id) {
@@ -93,11 +127,15 @@ export default function FabricInventoryPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-extrabold text-ink-900">Fabric Inventory</h1>
-          <p className="text-sm text-ink-400 font-semibold mt-0.5">{summary.length} fabric types · {Math.round(summary.reduce((s, f) => s + f.totalYards, 0) * 10) / 10} total yards</p>
+          <p className="text-sm text-ink-400 font-semibold mt-0.5">
+            {summary.length} fabric types · {Math.round(summary.reduce((s, f) => s + f.totalYards, 0) * 10) / 10} total yards
+          </p>
         </div>
         <div className="flex gap-1 bg-sand-100 p-1 rounded-xl">
-          {[['summary', 'Summary'], ['stock', 'Stock In'], ['usage', 'Usage'], ...(canEdit ? [['add', '+ Add Stock']] : [])].map(([k, l]) => (
-            <button key={k} onClick={() => setTab(k)} className={'px-4 py-2 text-xs font-bold rounded-lg transition-all ' + (tab === k ? 'bg-white shadow text-ink-900' : 'text-ink-400 hover:text-ink-600')}>{l}</button>
+          {[['summary', 'Summary'], ['stock', 'Stock In'], ['usage', 'Usage'],
+            ...(canEdit ? [['add', '+ Add'], ['adjust', '± Adjust']] : [])
+          ].map(([k, l]) => (
+            <button key={k} onClick={() => setTab(k)} className={'px-3 py-2 text-xs font-bold rounded-lg transition-all ' + (tab === k ? 'bg-white shadow text-ink-900' : 'text-ink-400 hover:text-ink-600')}>{l}</button>
           ))}
         </div>
       </div>
@@ -105,7 +143,6 @@ export default function FabricInventoryPage() {
       {loading ? (
         <div className="flex justify-center py-20"><div className="w-6 h-6 border-2 border-ak-900 border-t-transparent rounded-full animate-spin" /></div>
       ) : tab === 'summary' ? (
-        /* ── SUMMARY ── */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {summary.length === 0 ? (
             <p className="col-span-full text-sm text-ink-300 py-12 text-center">No fabric stock yet. Add stock manually or mark Fabric POs as Received.</p>
@@ -117,13 +154,12 @@ export default function FabricInventoryPage() {
                 {s.totalValue > 0 && <span>Value: {pkr(Math.round(s.totalValue))}</span>}
                 <span>{s.entries} receipt{s.entries !== 1 ? 's' : ''}</span>
               </div>
-              {s.totalYards < 10 && s.totalYards > 0 && <div className="mt-2 text-xs font-bold text-amber-700">⚠ Low stock</div>}
+              {s.totalYards > 0 && s.totalYards < 10 && <div className="mt-2 text-xs font-bold text-amber-700">⚠ Low stock</div>}
               {s.totalYards <= 0 && <div className="mt-2 text-xs font-bold text-red-700">⚠ Out of stock</div>}
             </div>
           ))}
         </div>
       ) : tab === 'stock' ? (
-        /* ── STOCK IN ── */
         <div className="bg-white rounded-2xl border border-sand-200 overflow-hidden">
           {stock.length === 0 ? <p className="text-sm text-ink-300 py-12 text-center">No stock entries</p> : (
             <table className="ak-table">
@@ -136,13 +172,15 @@ export default function FabricInventoryPage() {
                     <td className="text-right">{s.rate ? pkr(s.rate) : '—'}</td>
                     <td className="text-right font-bold">{s.rate ? pkr(Math.round(Number(s.yards) * Number(s.rate))) : '—'}</td>
                     <td className="text-ink-400">{s.supplier || '—'}</td>
-                    <td className="text-xs"><span className={'stage-badge ' + (s.po_ref?.startsWith('Manual') ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800')}>{s.po_ref?.startsWith('Manual') ? 'Manual' : s.po_ref || 'PO'}</span></td>
+                    <td className="text-xs">
+                      <span className={'stage-badge ' + (
+                        s.po_ref?.startsWith('Manual') ? 'bg-amber-100 text-amber-800' :
+                        s.po_ref?.startsWith('Adjustment') ? 'bg-purple-100 text-purple-800' :
+                        'bg-blue-100 text-blue-800'
+                      )}>{s.po_ref?.startsWith('Manual') ? 'Manual' : s.po_ref?.startsWith('Adjustment') ? 'Adjust' : s.po_ref || 'PO'}</span>
+                    </td>
                     <td className="text-xs text-ink-400">{s.date_received}</td>
-                    {canEdit && (
-                      <td className="text-right">
-                        <button onClick={() => deleteEntry(s.id)} className="text-[0.65rem] font-bold text-red-400 hover:text-red-600">✕</button>
-                      </td>
-                    )}
+                    {canEdit && <td className="text-right"><button onClick={() => deleteEntry(s.id)} className="text-[0.65rem] font-bold text-red-400 hover:text-red-600">✕</button></td>}
                   </tr>
                 ))}
               </tbody>
@@ -150,18 +188,17 @@ export default function FabricInventoryPage() {
           )}
         </div>
       ) : tab === 'usage' ? (
-        /* ── USAGE ── */
         <div className="bg-white rounded-2xl border border-sand-200 overflow-hidden">
-          {usage.length === 0 ? <p className="text-sm text-ink-300 py-12 text-center">No usage logged yet. Usage is tracked when fabric is cut for production orders.</p> : (
+          {usage.length === 0 ? <p className="text-sm text-ink-300 py-12 text-center">No usage or adjustments logged yet</p> : (
             <table className="ak-table">
-              <thead><tr><th>Fabric</th><th>Yards Used</th><th>Product</th><th>Type</th><th>Date</th></tr></thead>
+              <thead><tr><th>Fabric</th><th>Yards</th><th>Reason</th><th>Note</th><th>Date</th></tr></thead>
               <tbody>
                 {usage.map(u => (
                   <tr key={u.id}>
                     <td className="font-semibold">{u.fabric}</td>
-                    <td>{u.yards}</td>
-                    <td>{u.product_label || '—'}</td>
-                    <td className="text-ink-400">{u.type || '—'}</td>
+                    <td className="text-red-700 font-bold">-{u.yards}</td>
+                    <td><span className="stage-badge bg-sand-200 text-ink-600">{u.type || '—'}</span></td>
+                    <td className="text-sm text-ink-400">{u.product_label || '—'}</td>
                     <td className="text-xs text-ink-400">{u.date}</td>
                   </tr>
                 ))}
@@ -169,25 +206,23 @@ export default function FabricInventoryPage() {
             </table>
           )}
         </div>
-      ) : (
+      ) : tab === 'add' ? (
         /* ── ADD STOCK FORM ── */
         <div className="bg-white rounded-2xl border border-sand-200 p-6 max-w-lg">
-          <h2 className="text-lg font-extrabold text-ink-900 mb-4">Add Fabric Stock</h2>
-          <p className="text-xs text-ink-400 mb-4">Add existing fabric inventory or new purchases received outside of POs.</p>
+          <h2 className="text-lg font-extrabold text-ink-900 mb-1">Add Fabric Stock</h2>
+          <p className="text-xs text-ink-400 mb-4">Add existing inventory or purchases received outside of POs.</p>
           <form onSubmit={addStock} className="space-y-4">
             <div>
               <label className="text-xs font-bold text-ink-400 uppercase tracking-wider">Fabric Type</label>
               <div className="flex flex-wrap gap-2 mt-2 mb-2">
                 {allFabricTypes.map(f => (
                   <button key={f} type="button" onClick={() => setFabric(f)}
-                    className={'px-3 py-1.5 rounded-lg text-xs font-bold border-2 transition-all ' + (fabric === f ? 'border-ak-900 bg-ak-100 text-ak-900' : 'border-sand-200 text-ink-400 hover:border-sand-300')}>{f}</button>
+                    className={'px-3 py-1.5 rounded-lg text-xs font-bold border-2 transition-all ' + (fabric === f ? 'border-ak-900 bg-ak-100 text-ak-900' : 'border-sand-200 text-ink-400')}>{f}</button>
                 ))}
               </div>
-              <input type="text" value={fabric} onChange={e => setFabric(e.target.value)}
-                placeholder="Or type a custom fabric name…"
+              <input type="text" value={fabric} onChange={e => setFabric(e.target.value)} placeholder="Or type a custom name…"
                 className="w-full border border-sand-300 rounded-xl px-3 py-2.5 text-sm font-semibold bg-sand-50 focus:outline-none focus:ring-2 focus:ring-ak-900/20" />
             </div>
-
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-bold text-ink-400 uppercase tracking-wider">Yards *</label>
@@ -200,11 +235,7 @@ export default function FabricInventoryPage() {
                   className="mt-1 w-full border border-sand-300 rounded-xl px-3 py-2.5 text-sm font-semibold bg-sand-50 focus:outline-none focus:ring-2 focus:ring-ak-900/20" />
               </div>
             </div>
-
-            {yards && rate && (
-              <div className="text-right text-sm font-bold text-ak-900">Value: {pkr(Number(yards) * Number(rate))}</div>
-            )}
-
+            {yards && rate && <div className="text-right text-sm font-bold text-ak-900">Value: {pkr(Number(yards) * Number(rate))}</div>}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-bold text-ink-400 uppercase tracking-wider">Supplier</label>
@@ -217,10 +248,73 @@ export default function FabricInventoryPage() {
                   className="mt-1 w-full border border-sand-300 rounded-xl px-3 py-2.5 text-sm font-semibold bg-sand-50 focus:outline-none focus:ring-2 focus:ring-ak-900/20" />
               </div>
             </div>
-
-            <button type="submit" disabled={saving}
-              className="w-full bg-ak-900 text-white font-bold text-sm py-3 rounded-xl hover:bg-ak-800 transition-all disabled:opacity-50">
+            <button type="submit" disabled={saving} className="w-full bg-ak-900 text-white font-bold text-sm py-3 rounded-xl hover:bg-ak-800 disabled:opacity-50">
               {saving ? 'Adding…' : 'Add Stock'}
+            </button>
+          </form>
+        </div>
+      ) : (
+        /* ── ADJUST FORM ── */
+        <div className="bg-white rounded-2xl border border-sand-200 p-6 max-w-lg">
+          <h2 className="text-lg font-extrabold text-ink-900 mb-1">Adjust Fabric Stock</h2>
+          <p className="text-xs text-ink-400 mb-4">Record waste, damage, corrections, or production usage that wasn't auto-tracked.</p>
+
+          <div className="flex gap-2 mb-5">
+            <button onClick={() => setAdjDirection('subtract')}
+              className={'flex-1 py-2.5 text-xs font-bold rounded-xl border-2 transition-all ' + (adjDirection === 'subtract' ? 'border-red-500 bg-red-50 text-red-700' : 'border-sand-200 text-ink-400')}>
+              − Subtract
+            </button>
+            <button onClick={() => setAdjDirection('add')}
+              className={'flex-1 py-2.5 text-xs font-bold rounded-xl border-2 transition-all ' + (adjDirection === 'add' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-sand-200 text-ink-400')}>
+              + Add Back
+            </button>
+          </div>
+
+          <form onSubmit={submitAdjustment} className="space-y-4">
+            <div>
+              <label className="text-xs font-bold text-ink-400 uppercase tracking-wider">Fabric Type</label>
+              <div className="flex flex-wrap gap-2 mt-2 mb-2">
+                {summary.map(s => (
+                  <button key={s.fabric} type="button" onClick={() => setAdjFabric(s.fabric)}
+                    className={'px-3 py-1.5 rounded-lg text-xs font-bold border-2 transition-all ' + (adjFabric === s.fabric ? 'border-ak-900 bg-ak-100 text-ak-900' : 'border-sand-200 text-ink-400')}>
+                    {s.fabric} <span className="text-ink-300 ml-1">({Math.round(s.totalYards)}y)</span>
+                  </button>
+                ))}
+              </div>
+              <input type="text" value={adjFabric} onChange={e => setAdjFabric(e.target.value)} placeholder="Or type fabric name…"
+                className="w-full border border-sand-300 rounded-xl px-3 py-2.5 text-sm font-semibold bg-sand-50 focus:outline-none focus:ring-2 focus:ring-ak-900/20" />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-bold text-ink-400 uppercase tracking-wider">Yards *</label>
+                <input type="number" step="0.25" value={adjYards} onChange={e => setAdjYards(e.target.value)} placeholder="0"
+                  className={'mt-1 w-full border rounded-xl px-3 py-2.5 text-sm font-semibold focus:outline-none focus:ring-2 ' + (adjDirection === 'subtract' ? 'border-red-300 bg-red-50 focus:ring-red-400/20' : 'border-emerald-300 bg-emerald-50 focus:ring-emerald-400/20')} />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-ink-400 uppercase tracking-wider">Reason</label>
+                <select value={adjReason} onChange={e => setAdjReason(e.target.value)}
+                  className="mt-1 w-full border border-sand-300 rounded-xl px-3 py-2.5 text-sm font-semibold bg-sand-50 focus:outline-none focus:ring-2 focus:ring-ak-900/20">
+                  {ADJUST_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-ink-400 uppercase tracking-wider">Note</label>
+              <input type="text" value={adjNote} onChange={e => setAdjNote(e.target.value)} placeholder="Optional details…"
+                className="mt-1 w-full border border-sand-300 rounded-xl px-3 py-2.5 text-sm font-semibold bg-sand-50 focus:outline-none focus:ring-2 focus:ring-ak-900/20" />
+            </div>
+
+            {adjFabric && adjYards && (
+              <div className={'text-right text-sm font-bold ' + (adjDirection === 'subtract' ? 'text-red-700' : 'text-emerald-700')}>
+                {adjDirection === 'subtract' ? '−' : '+'}{adjYards} yards of {adjFabric}
+              </div>
+            )}
+
+            <button type="submit" disabled={adjSaving}
+              className={'w-full font-bold text-sm py-3 rounded-xl transition-all disabled:opacity-50 ' + (adjDirection === 'subtract' ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-emerald-600 text-white hover:bg-emerald-700')}>
+              {adjSaving ? 'Saving…' : adjDirection === 'subtract' ? 'Subtract Stock' : 'Add Back Stock'}
             </button>
           </form>
         </div>
