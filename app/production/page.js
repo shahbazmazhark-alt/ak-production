@@ -147,19 +147,26 @@ export default function ProductionPage() {
     if (idx < 0 || idx >= path.length - 1) return toast('Already at last stage', 'error')
     const nextStage = path[idx + 1]
 
+    // Optimistic update FIRST — instant UI
+    setCards(prev => prev.map(c => c.id === card.id ? { ...c, current_stage: nextStage } : c))
+    toast('→ ' + nextStage, 'success')
+
+    // Then persist to DB in background
     const { error } = await supabase.from('unit_cards')
       .update({ current_stage: nextStage, updated_at: new Date().toISOString() })
       .eq('id', card.id)
-    if (error) return toast(error.message, 'error')
+    if (error) {
+      // Revert on failure
+      setCards(prev => prev.map(c => c.id === card.id ? { ...c, current_stage: card.current_stage } : c))
+      toast('Failed: ' + error.message, 'error')
+      return
+    }
 
-    supabase.from('stage_history').insert({
+    // Log stage move (fire and forget)
+    try { await supabase.from('stage_history').insert({
       order_id: card.order_id, unit_card_id: card.id,
       stage: nextStage, action: 'moved', moved_by: user?.id || null,
-    }).catch(() => {})
-
-    // Optimistic update
-    setCards(prev => prev.map(c => c.id === card.id ? { ...c, current_stage: nextStage } : c))
-    toast('→ ' + nextStage, 'success')
+    }) } catch {}
   }
 
   // Move an unsplit order (batch) to next stage
@@ -173,7 +180,7 @@ export default function ProductionPage() {
 
     // If moving past Dyeing, trigger the split
     if (order.current_stage === SPLIT_AFTER || (idx > 0 && path[idx] === SPLIT_AFTER)) {
-      // Split: create individual unit cards
+      toast('Splitting into unit cards…', 'info')
       const sizes = order.sizes || {}
       const cardInserts = []
       for (const size of SIZES) {
@@ -194,15 +201,20 @@ export default function ProductionPage() {
         .update({ current_stage: nextStage, is_split: true, updated_at: new Date().toISOString() })
         .eq('id', order.id)
       toast('Split into ' + cardInserts.length + ' unit cards → ' + nextStage, 'success')
+      load()
     } else {
-      await supabase.from('production_orders')
-        .update({ current_stage: nextStage, updated_at: new Date().toISOString() })
-        .eq('id', order.id)
-      // Optimistic
+      // Optimistic update FIRST
       setOrders(prev => prev.map(o => o.id === order.id ? { ...o, current_stage: nextStage } : o))
       toast('→ ' + nextStage, 'success')
+
+      const { error } = await supabase.from('production_orders')
+        .update({ current_stage: nextStage, updated_at: new Date().toISOString() })
+        .eq('id', order.id)
+      if (error) {
+        setOrders(prev => prev.map(o => o.id === order.id ? { ...o, current_stage: order.current_stage } : o))
+        toast('Failed: ' + error.message, 'error')
+      }
     }
-    load()
   }
 
   // Build kanban data: unsplit orders show as batch cards, split orders show individual unit_cards
