@@ -3,16 +3,9 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import AppShell from '@/components/AppShell'
 import { supabase, pkr, today, STAGES } from '@/lib/supabase'
 
-// Excluded from payroll entirely (monthly salaried directors/management)
 const EXCLUDE = ['Shahbaz', 'Ayesha', 'Khizar', 'Umer', 'Rijah']
-
-// These show OT ONLY (monthly base handled outside)
 const OT_ONLY = ['Ashfaq', 'Sikandar', 'Shafeeq']
-
-// Piece-rate workers (paid per stitched piece)
 const PIECE_RATE = ['Qadir', 'Safdar']
-
-// Stages AFTER stitching = stitching is complete
 const POST_STITCH = ['QC', 'Packed', 'Dispatched']
 
 function getPresetRange(preset) {
@@ -34,9 +27,9 @@ export default function PayrollPage() {
   const [workers, setWorkers] = useState([])
   const [attendance, setAttendance] = useState([])
   const [unitCards, setUnitCards] = useState([])
-  const [stageHistory, setStageHistory] = useState([])
   const [products, setProducts] = useState([])
   const [loading, setLoading] = useState(true)
+  const [expandedWorker, setExpandedWorker] = useState(null)
 
   const [datePreset, setDatePreset] = useState('week')
   const [startDate, setStartDate] = useState(() => getPresetRange('week')[0])
@@ -44,84 +37,65 @@ export default function PayrollPage() {
 
   function applyPreset(p) {
     setDatePreset(p)
-    if (p !== 'custom') {
-      const [f, t] = getPresetRange(p)
-      setStartDate(f); setEndDate(t)
-    }
+    if (p !== 'custom') { const [f, t] = getPresetRange(p); setStartDate(f); setEndDate(t) }
   }
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [wRes, aRes, ucRes, shRes, pRes] = await Promise.all([
+    const [wRes, aRes, ucRes, pRes] = await Promise.all([
       supabase.from('workers').select('*').eq('is_active', true).order('name'),
       supabase.from('attendance').select('*').gte('date', startDate).lte('date', endDate),
+      // Get ALL unit cards that are past stitching — no date filter on cards themselves
+      // We use the card's master field to determine who stitched it
       supabase.from('unit_cards').select('id, order_id, product_id, product_label, master, current_stage, stitch_rate, updated_at'),
-      supabase.from('stage_history').select('*').gte('created_at', startDate + 'T00:00:00').lte('created_at', endDate + 'T23:59:59'),
       supabase.from('products').select('id, stitch_rate, label'),
     ])
     setWorkers((wRes.data || []).filter(w => !EXCLUDE.includes(w.name)))
     setAttendance(aRes.data || [])
     setUnitCards(ucRes.data || [])
-    setStageHistory(shRes.data || [])
     setProducts(pRes.data || [])
     setLoading(false)
   }, [startDate, endDate])
 
   useEffect(() => { load() }, [load])
 
-  // Build product stitch rate lookup
   const productRates = useMemo(() => {
     const map = {}
     products.forEach(p => { map[p.id] = p.stitch_rate || 0 })
     return map
   }, [products])
 
-  // Calculate piece-rate pay for Qadir/Safdar
-  // Method: find unit cards that moved into a post-stitching stage during the date range
-  // using stage_history entries where stage is in POST_STITCH
+  // Piece-rate calculation — SIMPLE AND RELIABLE
+  // Count unit cards where:
+  //   1. master is Qadir or Safdar
+  //   2. current_stage is past stitching (QC, Packed, or Dispatched)
+  //   3. updated_at falls within the selected date range
+  // This means: the card was stitched and moved forward during this period
   const pieceRateData = useMemo(() => {
     const result = {}
     PIECE_RATE.forEach(name => { result[name] = { pieces: 0, totalPay: 0, details: [] } })
 
-    // Get unit card IDs that entered post-stitching stages during this period
-    const cardsMoved = new Set()
-    stageHistory.forEach(sh => {
-      if (POST_STITCH.includes(sh.stage)) cardsMoved.add(sh.unit_card_id)
-    })
-
-    // For each card that moved past stitching in this period, check if master is a piece-rate worker
     unitCards.forEach(card => {
       if (!PIECE_RATE.includes(card.master)) return
-      
-      // Check if this card moved into post-stitching during the date range
-      const movedInPeriod = cardsMoved.has(card.id)
-      
-      // Also check: if no stage_history data yet, fall back to cards currently past stitching
-      // whose updated_at is within range
-      const updatedInRange = card.updated_at && card.updated_at >= startDate && card.updated_at <= endDate + 'T23:59:59'
-      const isPastStitching = POST_STITCH.includes(card.current_stage)
-      
-      if (movedInPeriod || (isPastStitching && updatedInRange)) {
-        const rate = card.stitch_rate || productRates[card.product_id] || 0
-        if (result[card.master]) {
-          // Avoid counting the same card twice
-          if (!result[card.master].details.find(d => d.cardId === card.id)) {
-            result[card.master].pieces += 1
-            result[card.master].totalPay += rate
-            result[card.master].details.push({
-              cardId: card.id,
-              label: card.product_label,
-              rate,
-            })
-          }
-        }
+      if (!POST_STITCH.includes(card.current_stage)) return
+
+      // Check if the card was updated within the date range
+      const cardDate = card.updated_at?.slice(0, 10)
+      if (!cardDate) return
+      if (cardDate < startDate || cardDate > endDate) return
+
+      const rate = card.stitch_rate || productRates[card.product_id] || 0
+      const w = result[card.master]
+      if (w && !w.details.find(d => d.cardId === card.id)) {
+        w.pieces += 1
+        w.totalPay += rate
+        w.details.push({ cardId: card.id, label: card.product_label, rate })
       }
     })
 
     return result
-  }, [unitCards, stageHistory, startDate, endDate, productRates])
+  }, [unitCards, startDate, endDate, productRates])
 
-  // Build payroll data
   const payroll = useMemo(() => {
     return workers.map(w => {
       const isPieceRate = PIECE_RATE.includes(w.name)
@@ -145,15 +119,10 @@ export default function PayrollPage() {
       })
       const hoursWorked = Math.round(totalMinsWorked / 60 * 10) / 10
 
-      let baseWage = 0
-      let pieces = 0
-      let pieceDetails = []
-
+      let baseWage = 0, pieces = 0, pieceDetails = []
       if (isPieceRate) {
         const pd = pieceRateData[w.name] || { pieces: 0, totalPay: 0, details: [] }
-        baseWage = pd.totalPay
-        pieces = pd.pieces
-        pieceDetails = pd.details
+        baseWage = pd.totalPay; pieces = pd.pieces; pieceDetails = pd.details
       } else if (!isOtOnly) {
         baseWage = w.pay_type === 'weekly'
           ? Math.round((w.weekly_wage || 0) / 6 * present.length)
@@ -178,9 +147,6 @@ export default function PayrollPage() {
     net: payroll.reduce((s, p) => s + p.netPay, 0),
   }
 
-  // Expanded detail view for piece-rate workers
-  const [expandedWorker, setExpandedWorker] = useState(null)
-
   return (
     <AppShell>
       <div className="flex items-center justify-between mb-4">
@@ -190,12 +156,10 @@ export default function PayrollPage() {
         </div>
       </div>
 
-      {/* Date filter */}
       <div className="flex flex-wrap items-center gap-2 mb-5">
         {[['week','This Week'], ['month','This Month'], ['ytd','YTD'], ['custom','Custom']].map(([k, l]) => (
           <button key={k} onClick={() => applyPreset(k)}
-            className={'px-3 py-1.5 text-xs font-bold rounded-lg transition-all ' + (datePreset === k ? 'bg-ak-900 text-white' : 'bg-sand-100 text-ink-400 hover:text-ink-600')}
-          >{l}</button>
+            className={'px-3 py-1.5 text-xs font-bold rounded-lg transition-all ' + (datePreset === k ? 'bg-ak-900 text-white' : 'bg-sand-100 text-ink-400 hover:text-ink-600')}>{l}</button>
         ))}
         <input type="date" value={startDate} onChange={e => { setStartDate(e.target.value); setDatePreset('custom') }}
           className="border border-sand-300 rounded-lg px-2 py-1.5 text-xs font-semibold bg-sand-50 focus:outline-none focus:ring-2 focus:ring-ak-900/20" />
@@ -204,7 +168,6 @@ export default function PayrollPage() {
           className="border border-sand-300 rounded-lg px-2 py-1.5 text-xs font-semibold bg-sand-50 focus:outline-none focus:ring-2 focus:ring-ak-900/20" />
       </div>
 
-      {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div className="bg-sand-100 rounded-2xl p-5"><div className="text-[0.65rem] font-bold tracking-[0.12em] text-ink-400 uppercase mb-1">Base + Piece-Rate</div><div className="text-xl font-extrabold text-ink-900">{pkr(totals.base)}</div></div>
         <div className="bg-red-50 rounded-2xl p-5"><div className="text-[0.65rem] font-bold tracking-[0.12em] text-red-600 uppercase mb-1">Late Deductions</div><div className="text-xl font-extrabold text-red-800">-{pkr(totals.late)}</div></div>
@@ -217,71 +180,26 @@ export default function PayrollPage() {
       ) : (
         <div className="bg-white rounded-2xl border border-sand-200 overflow-hidden">
           <table className="ak-table">
-            <thead>
-              <tr>
-                <th>Worker</th>
-                <th>Pay Type</th>
-                <th className="text-center">Present</th>
-                <th className="text-center">Pieces</th>
-                <th className="text-center">Hours</th>
-                <th className="text-right">Earnings</th>
-                <th className="text-right">Late</th>
-                <th className="text-right">OT</th>
-                <th className="text-right">Net</th>
-              </tr>
-            </thead>
+            <thead><tr><th>Worker</th><th>Pay Type</th><th className="text-center">Present</th><th className="text-center">Pieces</th><th className="text-center">Hours</th><th className="text-right">Earnings</th><th className="text-right">Late</th><th className="text-right">OT</th><th className="text-right">Net</th></tr></thead>
             <tbody>
               {payroll.map(p => (
-                <>
+                <>{/* Fragment needed for expand row */}
                   <tr key={p.id} className={p.isPieceRate ? 'cursor-pointer' : ''} onClick={() => p.isPieceRate && setExpandedWorker(expandedWorker === p.name ? null : p.name)}>
-                    <td>
-                      <div className="font-bold text-ink-800">{p.name}</div>
-                      <div className="text-[0.6rem] text-ink-400">{p.role}</div>
-                    </td>
-                    <td>
-                      <span className={'stage-badge ' + (
-                        p.isPieceRate ? 'bg-purple-100 text-purple-800' :
-                        p.isOtOnly ? 'bg-amber-100 text-amber-800' :
-                        'bg-sand-200 text-ink-600'
-                      )}>
-                        {p.isPieceRate ? 'Per Piece' : p.isOtOnly ? 'OT Only' : (p.pay_type || 'hourly')}
-                      </span>
-                    </td>
-                    <td className="text-center">
-                      <span className="text-sm font-bold text-emerald-700">{p.daysPresent}</span>
-                    </td>
-                    <td className="text-center">
-                      {p.isPieceRate ? (
-                        <span className="text-sm font-bold text-purple-700">{p.pieces}</span>
-                      ) : '—'}
-                    </td>
+                    <td><div className="font-bold text-ink-800">{p.name}</div><div className="text-[0.6rem] text-ink-400">{p.role}</div></td>
+                    <td><span className={'stage-badge ' + (p.isPieceRate ? 'bg-purple-100 text-purple-800' : p.isOtOnly ? 'bg-amber-100 text-amber-800' : 'bg-sand-200 text-ink-600')}>{p.isPieceRate ? 'Per Piece' : p.isOtOnly ? 'OT Only' : (p.pay_type || 'hourly')}</span></td>
+                    <td className="text-center"><span className="text-sm font-bold text-emerald-700">{p.daysPresent}</span></td>
+                    <td className="text-center">{p.isPieceRate ? <span className="text-sm font-bold text-purple-700">{p.pieces}</span> : '—'}</td>
                     <td className="text-center text-sm font-mono text-ink-600">{p.hoursWorked}h</td>
-                    <td className="text-right font-semibold">
-                      {p.isPieceRate ? (
-                        <span className="text-purple-700">{pkr(p.baseWage)}</span>
-                      ) : p.isOtOnly ? (
-                        <span className="text-ink-300">monthly</span>
-                      ) : pkr(p.baseWage)}
-                    </td>
-                    <td className="text-right">
-                      {p.totalLateDed > 0 ? <span className="text-red-700 font-semibold">-{pkr(p.totalLateDed)}</span> : '—'}
-                    </td>
-                    <td className="text-right">
-                      {p.totalOtPay > 0 ? (
-                        <><span className="text-emerald-700 font-semibold">+{pkr(p.totalOtPay)}</span><div className="text-[0.55rem] text-emerald-500">+{p.totalOtMins}m</div></>
-                      ) : '—'}
-                    </td>
+                    <td className="text-right font-semibold">{p.isPieceRate ? <span className="text-purple-700">{pkr(p.baseWage)}</span> : p.isOtOnly ? <span className="text-ink-300">monthly</span> : pkr(p.baseWage)}</td>
+                    <td className="text-right">{p.totalLateDed > 0 ? <span className="text-red-700 font-semibold">-{pkr(p.totalLateDed)}</span> : '—'}</td>
+                    <td className="text-right">{p.totalOtPay > 0 ? <><span className="text-emerald-700 font-semibold">+{pkr(p.totalOtPay)}</span><div className="text-[0.55rem] text-emerald-500">+{p.totalOtMins}m</div></> : '—'}</td>
                     <td className="text-right font-extrabold text-ink-900">{pkr(p.netPay)}</td>
                   </tr>
-                  {/* Expanded piece detail */}
                   {p.isPieceRate && expandedWorker === p.name && p.pieceDetails.length > 0 && (
                     <tr key={p.id + '-detail'}>
                       <td colSpan={9} className="bg-purple-50/50 px-6 py-3">
-                        <div className="text-[0.65rem] font-bold text-purple-800 uppercase tracking-wider mb-2">
-                          Completed Pieces — {p.pieces} total
-                        </div>
+                        <div className="text-[0.65rem] font-bold text-purple-800 uppercase tracking-wider mb-2">Completed pieces — {p.pieces} total</div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
-                          {/* Group by product label and show count */}
                           {Object.entries(
                             p.pieceDetails.reduce((acc, d) => {
                               const key = d.label + '|' + d.rate
