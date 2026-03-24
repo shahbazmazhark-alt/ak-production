@@ -46,7 +46,6 @@ export default function ProductionPage() {
   const [showDropdown, setShowDropdown] = useState(false)
   const [purpose, setPurpose] = useState('Stock')
   const [orderRef, setOrderRef] = useState('')
-  const [master, setMaster] = useState('')
   const [fabricYards, setFabricYards] = useState('')
   const [qty, setQty] = useState({ XS: 0, S: 0, M: 0, L: 0 })
   const [notes, setNotes] = useState('')
@@ -57,7 +56,6 @@ export default function ProductionPage() {
   const [confirmDel, setConfirmDel] = useState(null)
   const [editingId, setEditingId] = useState(null)
   const [editSize, setEditSize] = useState('')
-  const [editMaster, setEditMaster] = useState('')
   const [workerPick, setWorkerPick] = useState(null)
   const [dispatchModal, setDispatchModal] = useState(null)
   const [dispatchType, setDispatchType] = useState('Store Inventory')
@@ -81,8 +79,6 @@ export default function ProductionPage() {
   const filteredCards = useMemo(() => { if (!dateFrom && !dateTo) return cards; const ids = new Set(filteredOrders.map(o => o.id)); return cards.filter(c => !c.order_id || ids.has(c.order_id)) }, [cards, filteredOrders, dateFrom, dateTo])
   const filteredProducts = useMemo(() => { if (!searchTerm) return products; const q = searchTerm.toLowerCase(); return products.filter(p => p.name?.toLowerCase().includes(q) || p.base_sku?.toLowerCase().includes(q) || p.collection?.toLowerCase().includes(q) || p.label?.toLowerCase().includes(q)) }, [products, searchTerm])
 
-  const masters = workers.filter(w => w.role?.toLowerCase().includes('stitch') || w.role?.toLowerCase().includes('master'))
-  const masterList = masters.length > 0 ? masters : workers
   function selectProduct(p) { setSelProduct(p); setSearchTerm(p.label || (p.name + ' - ' + p.type)); setShowDropdown(false) }
 
   function getDueDate(item) { if (item.due_date) return item.due_date; if (item.order_id) { const o = orders.find(x => x.id === item.order_id); return o?.due_date } return null }
@@ -184,11 +180,14 @@ export default function ProductionPage() {
     setConfirmDel(null); toast('Deleted', 'success')
   }
 
-  function startEditCard(item) { if (editingId === item.id) { setEditingId(null); return }; setEditingId(item.id); setEditSize(item.isBatch ? '' : (item.size || 'M')); setEditMaster(item.master || '') }
+  function startEditCard(item) { if (editingId === item.id) { setEditingId(null); return }; setEditingId(item.id); setEditSize(item.isBatch ? '' : (item.size || 'M')) }
   async function saveCardEdit(item) {
-    if (item.isBatch) { const u = { master: editMaster || null, updated_at: new Date().toISOString() }; await supabase.from('production_orders').update(u).eq('id', item.id); setOrders(prev => prev.map(o => o.id === item.id ? { ...o, ...u } : o)); await supabase.from('unit_cards').update({ master: editMaster || null }).eq('order_id', item.id); setCards(prev => prev.map(c => c.order_id === item.id ? { ...c, master: editMaster || null } : c)) }
-    else { const ns = (item.full_sku || '').replace(/\/[A-Z]+$/, '') + '/' + editSize; const u = { size: editSize, full_sku: ns, master: editMaster || null, updated_at: new Date().toISOString() }; await supabase.from('unit_cards').update(u).eq('id', item.id); setCards(prev => prev.map(c => c.id === item.id ? { ...c, ...u } : c)) }
-    setEditingId(null); toast('Updated', 'success')
+    if (item.isBatch) { setEditingId(null); return }
+    const ns = (item.full_sku || '').replace(/\/[A-Z]+$/, '') + '/' + editSize
+    const u = { size: editSize, full_sku: ns, updated_at: new Date().toISOString() }
+    await supabase.from('unit_cards').update(u).eq('id', item.id)
+    setCards(prev => prev.map(c => c.id === item.id ? { ...c, ...u } : c))
+    setEditingId(null); toast('Size updated', 'success')
   }
 
   const kanbanItems = useMemo(() => { const s = {}; STAGES.forEach(x => s[x] = []); filteredOrders.filter(o => !o.is_split).forEach(o => { if (s[o.current_stage]) s[o.current_stage].push({ ...o, isBatch: true, type: 'order' }) }); filteredCards.forEach(c => { if (s[c.current_stage]) s[c.current_stage].push({ ...c, isBatch: false, type: 'card' }) }); return s }, [filteredOrders, filteredCards])
@@ -252,9 +251,8 @@ export default function ProductionPage() {
                   <div className="flex items-start justify-between"><div className="text-sm font-bold text-ink-800 leading-tight">{item.product_label || '—'}</div>{due && <span className={'text-[0.5rem] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ' + due.c}>{due.t}</span>}</div>
                   {item.isBatch ? (<><div className="flex items-center gap-2 mt-1.5 flex-wrap"><span className="text-[0.65rem] font-bold text-white bg-ak-900 px-2 py-0.5 rounded">BATCH</span><span className="text-[0.6rem] text-ink-400">{item.total_units} units</span>{item.fabric_yards?.total && <span className="text-[0.6rem] text-ink-400">{item.fabric_yards.total} yds</span>}</div>{item.shopify_order_name && <div className="text-[0.6rem] text-blue-600 mt-1">#{item.shopify_order_name}</div>}{item.master && <div className="text-[0.6rem] text-ink-300 mt-0.5">{item.master}</div>}</>) : (<><div className="flex items-center gap-2 mt-1.5 flex-wrap"><span className="text-[0.65rem] font-bold text-ink-400 bg-white px-1.5 py-0.5 rounded">{item.size}</span>{item.master && <span className="text-[0.6rem] text-ink-300">{item.master}</span>}</div><div className="text-[0.6rem] text-ink-300 mt-1 font-mono">{item.full_sku}</div>{item.dispatch_destination && <div className="text-[0.55rem] text-emerald-700 font-semibold mt-1">📦 {item.dispatch_destination}</div>}</>)}
                 </div>
-                {editingId === item.id && canE && (<div className="mt-2 pt-2 border-t border-sand-200 space-y-2" onClick={e => e.stopPropagation()}>
-                  {!item.isBatch && (<div><div className="text-[0.55rem] font-bold text-ink-400 uppercase mb-1">Size</div><div className="flex gap-1">{SIZES.map(s => (<button key={s} onClick={() => setEditSize(s)} className={'flex-1 py-1 text-[0.65rem] font-bold rounded-md border ' + (editSize === s ? 'border-ak-900 bg-ak-100 text-ak-900' : 'border-sand-200 text-ink-400')}>{s}</button>))}</div></div>)}
-                  <div><div className="text-[0.55rem] font-bold text-ink-400 uppercase mb-1">Master</div><select value={editMaster} onChange={e => setEditMaster(e.target.value)} className="w-full border border-sand-300 rounded-md px-2 py-1 text-[0.7rem] font-semibold bg-sand-50"><option value="">None</option>{masterList.map(w => <option key={w.id} value={w.name}>{w.name}</option>)}</select></div>
+                {editingId === item.id && canE && !item.isBatch && (<div className="mt-2 pt-2 border-t border-sand-200 space-y-2" onClick={e => e.stopPropagation()}>
+                  <div><div className="text-[0.55rem] font-bold text-ink-400 uppercase mb-1">Size</div><div className="flex gap-1">{SIZES.map(s => (<button key={s} onClick={() => setEditSize(s)} className={'flex-1 py-1 text-[0.65rem] font-bold rounded-md border ' + (editSize === s ? 'border-ak-900 bg-ak-100 text-ak-900' : 'border-sand-200 text-ink-400')}>{s}</button>))}</div></div>
                   <div className="flex gap-1"><button onClick={() => setEditingId(null)} className="flex-1 text-[0.6rem] font-bold text-ink-400 bg-sand-100 rounded-md py-1.5">Cancel</button><button onClick={() => saveCardEdit(item)} className="flex-1 text-[0.6rem] font-bold text-white bg-ak-900 rounded-md py-1.5">Save</button></div>
                 </div>)}
                 {canE && editingId !== item.id && (<div className="flex gap-1 mt-2">
