@@ -8,6 +8,19 @@ import { useAuth } from '@/components/AuthProvider'
 const PURPOSES = ['Stock', 'Sample', 'Online Order', 'Mixed']
 const SPLIT_AFTER = 'Dyeing'
 
+// Default worker assignments per stage
+// Single worker = auto-assign, array = show picker
+const STAGE_WORKERS = {
+  'Fabric Cut': 'Dilshad',
+  'Dyeing': 'Amir',
+  'Computer Embroidery': ['Sikandar', 'Shafeeq'],
+  'Hand Embroidery': ['Ashfaq', 'Honey'],
+  'Stitching': ['Safdar', 'Qadir'],
+  'QC': 'Umer',
+  'Packed': 'Khizar',
+  'Dispatched': 'Khizar',
+}
+
 function getPresetRange(preset) {
   const now = new Date()
   const y = now.getFullYear(), m = now.getMonth(), d = now.getDate()
@@ -62,6 +75,9 @@ export default function ProductionPage() {
   const [editingId, setEditingId] = useState(null)
   const [editSize, setEditSize] = useState('')
   const [editMaster, setEditMaster] = useState('')
+
+  // Worker picker modal (for stages with multiple default workers)
+  const [workerPick, setWorkerPick] = useState(null) // { item, direction, nextStage, workers }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -171,13 +187,31 @@ export default function ProductionPage() {
     if (newIdx < 0 || newIdx >= path.length) return toast(direction > 0 ? 'Already at last stage' : 'Already at first stage', 'error')
     const nextStage = path[newIdx]
 
-    setCards(prev => prev.map(c => c.id === card.id ? { ...c, current_stage: nextStage } : c))
-    toast((direction > 0 ? '→ ' : '← ') + nextStage, 'success')
+    // Check stage worker assignment (only when moving forward)
+    if (direction > 0) {
+      const sw = STAGE_WORKERS[nextStage]
+      if (Array.isArray(sw)) {
+        // Multiple workers — show picker
+        setWorkerPick({ item: card, direction, nextStage, workers: sw })
+        return
+      }
+    }
 
-    const { error } = await supabase.from('unit_cards')
-      .update({ current_stage: nextStage, updated_at: new Date().toISOString() }).eq('id', card.id)
+    // Auto-assign worker if single default exists (forward only)
+    const assignWorker = direction > 0 ? (typeof STAGE_WORKERS[nextStage] === 'string' ? STAGE_WORKERS[nextStage] : null) : null
+    await doMoveCard(card, nextStage, direction, assignWorker)
+  }
+
+  async function doMoveCard(card, nextStage, direction, assignWorker) {
+    const updates = { current_stage: nextStage, updated_at: new Date().toISOString() }
+    if (assignWorker !== null) updates.master = assignWorker
+
+    setCards(prev => prev.map(c => c.id === card.id ? { ...c, current_stage: nextStage, ...(assignWorker !== null ? { master: assignWorker } : {}) } : c))
+    toast((direction > 0 ? '→ ' : '← ') + nextStage + (assignWorker ? ' (' + assignWorker + ')' : ''), 'success')
+
+    const { error } = await supabase.from('unit_cards').update(updates).eq('id', card.id)
     if (error) {
-      setCards(prev => prev.map(c => c.id === card.id ? { ...c, current_stage: card.current_stage } : c))
+      setCards(prev => prev.map(c => c.id === card.id ? { ...c, current_stage: card.current_stage, master: card.master } : c))
       toast('Failed: ' + error.message, 'error'); return
     }
     try { await supabase.from('stage_history').insert({
@@ -203,14 +237,42 @@ export default function ProductionPage() {
       return
     }
 
-    setOrders(prev => prev.map(o => o.id === order.id ? { ...o, current_stage: nextStage } : o))
-    toast((direction > 0 ? '→ ' : '← ') + nextStage, 'success')
+    // Check stage worker assignment (only when moving forward)
+    if (direction > 0) {
+      const sw = STAGE_WORKERS[nextStage]
+      if (Array.isArray(sw)) {
+        setWorkerPick({ item: { ...order, isBatch: true, type: 'order' }, direction, nextStage, workers: sw })
+        return
+      }
+    }
 
-    const { error } = await supabase.from('production_orders')
-      .update({ current_stage: nextStage, updated_at: new Date().toISOString() }).eq('id', order.id)
+    const assignWorker = direction > 0 ? (typeof STAGE_WORKERS[nextStage] === 'string' ? STAGE_WORKERS[nextStage] : null) : null
+    await doMoveOrder(order, nextStage, direction, assignWorker)
+  }
+
+  async function doMoveOrder(order, nextStage, direction, assignWorker) {
+    const updates = { current_stage: nextStage, updated_at: new Date().toISOString() }
+    if (assignWorker !== null) updates.master = assignWorker
+
+    setOrders(prev => prev.map(o => o.id === order.id ? { ...o, current_stage: nextStage, ...(assignWorker !== null ? { master: assignWorker } : {}) } : o))
+    toast((direction > 0 ? '→ ' : '← ') + nextStage + (assignWorker ? ' (' + assignWorker + ')' : ''), 'success')
+
+    const { error } = await supabase.from('production_orders').update(updates).eq('id', order.id)
     if (error) {
-      setOrders(prev => prev.map(o => o.id === order.id ? { ...o, current_stage: order.current_stage } : o))
+      setOrders(prev => prev.map(o => o.id === order.id ? { ...o, current_stage: order.current_stage, master: order.master } : o))
       toast('Failed: ' + error.message, 'error')
+    }
+  }
+
+  // ── PICK WORKER AND MOVE ──
+  async function pickWorkerAndMove(workerName) {
+    if (!workerPick) return
+    const { item, direction, nextStage } = workerPick
+    setWorkerPick(null)
+    if (item.type === 'order' || item.isBatch) {
+      await doMoveOrder(item, nextStage, direction, workerName)
+    } else {
+      await doMoveCard(item, nextStage, direction, workerName)
     }
   }
 
@@ -354,6 +416,30 @@ export default function ProductionPage() {
               <button onClick={() => setConfirmDel(null)} className="flex-1 py-2.5 text-sm font-bold text-ink-500 bg-sand-100 rounded-xl hover:bg-sand-200">Cancel</button>
               <button onClick={() => deleteItem(confirmDel)} className="flex-1 py-2.5 text-sm font-bold text-white bg-red-600 rounded-xl hover:bg-red-700">Delete</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── WORKER PICKER MODAL ── */}
+      {workerPick && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[90]" onClick={() => setWorkerPick(null)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-xs shadow-2xl" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-extrabold text-ink-900 mb-1">Assign Worker</h3>
+            <p className="text-xs text-ink-400 mb-1">
+              <span className="font-bold text-ink-700">{workerPick.item.product_label}</span>
+            </p>
+            <p className="text-xs text-ink-400 mb-4">
+              Moving to <span className="font-bold text-ak-900">{workerPick.nextStage}</span> — who&apos;s handling this?
+            </p>
+            <div className="space-y-2">
+              {workerPick.workers.map(w => (
+                <button key={w} onClick={() => pickWorkerAndMove(w)}
+                  className="w-full py-3 text-sm font-bold text-ink-800 bg-sand-50 border border-sand-200 rounded-xl hover:bg-ak-100 hover:border-ak-900/20 transition-all">
+                  {w}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setWorkerPick(null)} className="w-full mt-3 py-2 text-xs font-bold text-ink-400 bg-sand-100 rounded-xl hover:bg-sand-200">Cancel</button>
           </div>
         </div>
       )}
