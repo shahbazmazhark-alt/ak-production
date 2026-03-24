@@ -47,7 +47,7 @@ export default function PayrollPage() {
       supabase.from('attendance').select('*').gte('date', startDate).lte('date', endDate),
       // Get ALL unit cards that are past stitching — no date filter on cards themselves
       // We use the card's master field to determine who stitched it
-      supabase.from('unit_cards').select('id, order_id, product_id, product_label, master, current_stage, stitch_rate, updated_at'),
+      supabase.from('unit_cards').select('id, order_id, product_id, product_label, master, stitch_master, current_stage, stitch_rate, updated_at'),
       supabase.from('products').select('id, stitch_rate, label'),
     ])
     setWorkers((wRes.data || []).filter(w => !EXCLUDE.includes(w.name)))
@@ -76,16 +76,17 @@ export default function PayrollPage() {
     PIECE_RATE.forEach(name => { result[name] = { pieces: 0, totalPay: 0, details: [] } })
 
     unitCards.forEach(card => {
-      if (!PIECE_RATE.includes(card.master)) return
+      // Use stitch_master field (locked at Stitching stage), fall back to master for legacy cards
+      const stitcher = card.stitch_master || card.master
+      if (!PIECE_RATE.includes(stitcher)) return
       if (!POST_STITCH.includes(card.current_stage)) return
 
-      // Check if the card was updated within the date range
       const cardDate = card.updated_at?.slice(0, 10)
       if (!cardDate) return
       if (cardDate < startDate || cardDate > endDate) return
 
       const rate = card.stitch_rate || productRates[card.product_id] || 0
-      const w = result[card.master]
+      const w = result[stitcher]
       if (w && !w.details.find(d => d.cardId === card.id)) {
         w.pieces += 1
         w.totalPay += rate
