@@ -127,10 +127,9 @@ export default function ProductionPage() {
     const ns = path[newIdx]
     if (dir > 0 && ns === 'Dispatched') { setDispatchModal({ item: card, nextStage: ns }); setDispatchType('Store Inventory'); setDispatchRef(''); return }
     if (dir > 0 && Array.isArray(STAGE_WORKERS[ns])) { setWorkerPick({ item: card, direction: dir, nextStage: ns, workers: STAGE_WORKERS[ns] }); return }
-    // Forward: auto-assign single default. Back: assign target stage's default (or null)
-    const aw = dir > 0
-      ? (typeof STAGE_WORKERS[ns] === 'string' ? STAGE_WORKERS[ns] : null)
-      : (typeof STAGE_WORKERS[ns] === 'string' ? STAGE_WORKERS[ns] : null)
+    // Auto-assign: check STAGE_WORKERS first, then product's stitch_master for Stitching
+    let aw = typeof STAGE_WORKERS[ns] === 'string' ? STAGE_WORKERS[ns] : null
+    if (ns === 'Stitching' && product?.stitch_master) aw = product.stitch_master
     await doMoveCard(card, ns, dir, aw)
   }
   async function doMoveCard(card, ns, dir, aw, extra = {}) {
@@ -150,7 +149,8 @@ export default function ProductionPage() {
     if (dir > 0 && (order.current_stage === SPLIT_AFTER || path[idx] === SPLIT_AFTER)) { const sizes = order.sizes || {}; setSplitQty({ XS: Number(sizes.XS||0), S: Number(sizes.S||0), M: Number(sizes.M||0), L: Number(sizes.L||0) }); setSplitOrder({ ...order, _nextStage: ns }); return }
     if (dir > 0 && ns === 'Dispatched') { setDispatchModal({ item: { ...order, isBatch: true, type: 'order' }, nextStage: ns }); setDispatchType('Store Inventory'); setDispatchRef(''); return }
     if (dir > 0 && Array.isArray(STAGE_WORKERS[ns])) { setWorkerPick({ item: { ...order, isBatch: true, type: 'order' }, direction: dir, nextStage: ns, workers: STAGE_WORKERS[ns] }); return }
-    const aw = typeof STAGE_WORKERS[ns] === 'string' ? STAGE_WORKERS[ns] : null
+    let aw = typeof STAGE_WORKERS[ns] === 'string' ? STAGE_WORKERS[ns] : null
+    if (ns === 'Stitching' && product?.stitch_master) aw = product.stitch_master
     await doMoveOrder(order, ns, dir, aw)
   }
   async function doMoveOrder(order, ns, dir, aw, extra = {}) {
