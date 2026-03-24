@@ -205,8 +205,14 @@ export default function ProductionPage() {
   async function doMoveCard(card, nextStage, direction, assignWorker) {
     const updates = { current_stage: nextStage, updated_at: new Date().toISOString() }
     if (assignWorker !== null) updates.master = assignWorker
+    // Lock in stitch_master when entering Stitching — this is what payroll reads
+    if (nextStage === 'Stitching' && assignWorker) updates.stitch_master = assignWorker
 
-    setCards(prev => prev.map(c => c.id === card.id ? { ...c, current_stage: nextStage, ...(assignWorker !== null ? { master: assignWorker } : {}) } : c))
+    const optimistic = { current_stage: nextStage }
+    if (assignWorker !== null) optimistic.master = assignWorker
+    if (nextStage === 'Stitching' && assignWorker) optimistic.stitch_master = assignWorker
+
+    setCards(prev => prev.map(c => c.id === card.id ? { ...c, ...optimistic } : c))
     toast((direction > 0 ? '→ ' : '← ') + nextStage + (assignWorker ? ' (' + assignWorker + ')' : ''), 'success')
 
     const { error } = await supabase.from('unit_cards').update(updates).eq('id', card.id)
