@@ -10,10 +10,9 @@ const SPLIT_AFTER = 'Dyeing'
 const STAGE_WORKERS = {
   'Cutting': 'Dilshad', 'Dyeing': 'Amir',
   'Computer Embroidery': ['Sikandar', 'Shafeeq'], 'Hand Embroidery': ['Ashfaq', 'Honey'],
-  'QC': 'Umer', 'Packed': 'Khizar', 'Dispatched': 'Khizar',
+  'Dispatched': 'Khizar',
 }
 const DISPATCH_TYPES = ['Store Inventory', 'Online Order', 'Custom Order', 'Gifting', 'Sample']
-const QC_OPTIONS = ['Pass', 'Fail', 'Rework']
 
 function getPresetRange(p) {
   const now = new Date(), y = now.getFullYear(), m = now.getMonth(), d = now.getDate(), day = now.getDay()
@@ -63,9 +62,6 @@ export default function ProductionPage() {
   const [dispatchModal, setDispatchModal] = useState(null)
   const [dispatchType, setDispatchType] = useState('Store Inventory')
   const [dispatchRef, setDispatchRef] = useState('')
-  const [qcModal, setQcModal] = useState(null)
-  const [qcResult, setQcResult] = useState('Pass')
-  const [qcNotes, setQcNotes] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -130,7 +126,6 @@ export default function ProductionPage() {
     if (newIdx < 0 || newIdx >= path.length) return toast(dir > 0 ? 'Last stage' : 'First stage', 'error')
     const ns = path[newIdx]
     if (dir > 0 && ns === 'Dispatched') { setDispatchModal({ item: card, nextStage: ns }); setDispatchType('Store Inventory'); setDispatchRef(''); return }
-    if (dir > 0 && card.current_stage === 'QC') { setQcModal({ item: card, nextStage: ns }); setQcResult('Pass'); setQcNotes(''); return }
     if (dir > 0 && Array.isArray(STAGE_WORKERS[ns])) { setWorkerPick({ item: card, direction: dir, nextStage: ns, workers: STAGE_WORKERS[ns] }); return }
     // Forward: auto-assign single default. Back: assign target stage's default (or null)
     const aw = dir > 0
@@ -183,13 +178,6 @@ export default function ProductionPage() {
     else await doMoveCard(item, ns, 1, 'Khizar', { dispatch_destination: dest })
   }
 
-  async function confirmQC() {
-    if (!qcModal) return; const { item, nextStage: ns } = qcModal; setQcModal(null)
-    if (qcResult === 'Pass') { const aw = typeof STAGE_WORKERS[ns] === 'string' ? STAGE_WORKERS[ns] : null; await doMoveCard(item, ns, 1, aw, { qc_status: 'pass', qc_notes: qcNotes || null }) }
-    else if (qcResult === 'Fail') { await supabase.from('unit_cards').update({ qc_status: 'fail', qc_notes: qcNotes || 'Failed QC', updated_at: new Date().toISOString() }).eq('id', item.id); setCards(prev => prev.map(c => c.id === item.id ? { ...c, qc_status: 'fail', qc_notes: qcNotes } : c)); toast('QC Failed', 'error') }
-    else { const product = products.find(p => p.id === item.product_id); const path = product?.production_path || STAGES; const si = path.indexOf('Stitching'); const rs = si >= 0 ? 'Stitching' : path[Math.max(0, path.indexOf('QC') - 1)]; await doMoveCard(item, rs, -1, null, { qc_status: 'rework', qc_notes: qcNotes || 'Rework' }) }
-  }
-
   async function deleteItem(item) {
     if (item.type === 'order') { await supabase.from('unit_cards').delete().eq('order_id', item.id); await supabase.from('production_orders').delete().eq('id', item.id); setOrders(prev => prev.filter(o => o.id !== item.id)); setCards(prev => prev.filter(c => c.order_id !== item.id)) }
     else { await supabase.from('unit_cards').delete().eq('id', item.id); setCards(prev => prev.filter(c => c.id !== item.id)) }
@@ -206,7 +194,7 @@ export default function ProductionPage() {
   const kanbanItems = useMemo(() => { const s = {}; STAGES.forEach(x => s[x] = []); filteredOrders.filter(o => !o.is_split).forEach(o => { if (s[o.current_stage]) s[o.current_stage].push({ ...o, isBatch: true, type: 'order' }) }); filteredCards.forEach(c => { if (s[c.current_stage]) s[c.current_stage].push({ ...c, isBatch: false, type: 'card' }) }); return s }, [filteredOrders, filteredCards])
   const allItems = useMemo(() => { const i = []; filteredOrders.filter(o => !o.is_split).forEach(o => i.push({ ...o, type: 'order', isBatch: true })); filteredCards.forEach(c => i.push({ ...c, type: 'card', isBatch: false })); return i.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')) }, [filteredOrders, filteredCards])
 
-  const sc = { 'Cutting': 'border-l-amber-500 bg-amber-50', 'Dyeing': 'border-l-blue-500 bg-blue-50', 'Adda Work': 'border-l-purple-500 bg-purple-50', 'Computer Embroidery': 'border-l-cyan-500 bg-cyan-50', 'Hand Embroidery': 'border-l-pink-500 bg-pink-50', 'Stitching': 'border-l-orange-500 bg-orange-50', 'QC': 'border-l-yellow-500 bg-yellow-50', 'Packed': 'border-l-emerald-500 bg-emerald-50', 'Dispatched': 'border-l-green-600 bg-green-50' }
+  const sc = { 'Cutting': 'border-l-amber-500 bg-amber-50', 'Dyeing': 'border-l-blue-500 bg-blue-50', 'Adda Work': 'border-l-purple-500 bg-purple-50', 'Computer Embroidery': 'border-l-cyan-500 bg-cyan-50', 'Hand Embroidery': 'border-l-pink-500 bg-pink-50', 'Stitching': 'border-l-orange-500 bg-orange-50', 'Dispatched': 'border-l-green-600 bg-green-50' }
   const canE = can(user, 'canEdit', 'production')
 
   return (
@@ -227,14 +215,6 @@ export default function ProductionPage() {
           {(dispatchType === 'Online Order' || dispatchType === 'Custom Order') && (<input type="text" value={dispatchRef} onChange={e => setDispatchRef(e.target.value)} placeholder={dispatchType === 'Online Order' ? 'Order # (e.g. #1045)' : 'Customer name or details'} className="w-full border border-sand-300 rounded-xl px-3 py-2.5 text-sm font-semibold bg-sand-50 focus:outline-none focus:ring-2 focus:ring-ak-900/20" />)}
         </div>
         <div className="flex gap-3"><button onClick={() => setDispatchModal(null)} className="flex-1 py-2.5 text-sm font-bold text-ink-500 bg-sand-100 rounded-xl">Cancel</button><button onClick={confirmDispatch} className="flex-1 py-2.5 text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700">Dispatch →</button></div>
-      </div></div>)}
-
-      {qcModal && (<div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[90]" onClick={() => setQcModal(null)}><div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
-        <h3 className="text-lg font-extrabold text-ink-900 mb-1">QC result</h3>
-        <p className="text-xs text-ink-400 mb-4"><span className="font-bold text-ink-700">{qcModal.item.product_label}</span> — {qcModal.item.size}</p>
-        <div className="flex gap-2 mb-4">{QC_OPTIONS.map(o => (<button key={o} onClick={() => setQcResult(o)} className={'flex-1 py-2.5 text-sm font-bold rounded-xl border-2 transition-all ' + (qcResult === o ? o === 'Pass' ? 'border-emerald-500 bg-emerald-50 text-emerald-800' : o === 'Fail' ? 'border-red-500 bg-red-50 text-red-800' : 'border-amber-500 bg-amber-50 text-amber-800' : 'border-sand-200 text-ink-400')}>{o}</button>))}</div>
-        {(qcResult === 'Fail' || qcResult === 'Rework') && (<textarea value={qcNotes} onChange={e => setQcNotes(e.target.value)} rows={2} placeholder={qcResult === 'Fail' ? 'What went wrong?' : 'What needs rework?'} className="w-full border border-sand-300 rounded-xl px-3 py-2.5 text-sm font-semibold bg-sand-50 mb-4 resize-none focus:outline-none focus:ring-2 focus:ring-ak-900/20" />)}
-        <div className="flex gap-3"><button onClick={() => setQcModal(null)} className="flex-1 py-2.5 text-sm font-bold text-ink-500 bg-sand-100 rounded-xl">Cancel</button><button onClick={confirmQC} className={'flex-1 py-2.5 text-sm font-bold text-white rounded-xl ' + (qcResult === 'Pass' ? 'bg-emerald-600' : qcResult === 'Fail' ? 'bg-red-600' : 'bg-amber-600')}>{qcResult === 'Pass' ? 'Pass → Packed' : qcResult === 'Fail' ? 'Mark Failed' : 'Send to Rework'}</button></div>
       </div></div>)}
 
       {workerPick && (<div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[90]" onClick={() => setWorkerPick(null)}><div className="bg-white rounded-2xl p-6 w-full max-w-xs shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -270,7 +250,7 @@ export default function ProductionPage() {
               <div key={item.id} className={'border-l-4 ' + (sc[stage] || 'border-l-gray-400 bg-gray-50') + ' rounded-xl p-3 shadow-sm'}>
                 <div className={canE ? 'cursor-pointer' : ''} onClick={() => canE && startEditCard(item)}>
                   <div className="flex items-start justify-between"><div className="text-sm font-bold text-ink-800 leading-tight">{item.product_label || '—'}</div>{due && <span className={'text-[0.5rem] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ' + due.c}>{due.t}</span>}</div>
-                  {item.isBatch ? (<><div className="flex items-center gap-2 mt-1.5 flex-wrap"><span className="text-[0.65rem] font-bold text-white bg-ak-900 px-2 py-0.5 rounded">BATCH</span><span className="text-[0.6rem] text-ink-400">{item.total_units} units</span>{item.fabric_yards?.total && <span className="text-[0.6rem] text-ink-400">{item.fabric_yards.total} yds</span>}</div>{item.shopify_order_name && <div className="text-[0.6rem] text-blue-600 mt-1">#{item.shopify_order_name}</div>}{item.master && <div className="text-[0.6rem] text-ink-300 mt-0.5">{item.master}</div>}</>) : (<><div className="flex items-center gap-2 mt-1.5 flex-wrap"><span className="text-[0.65rem] font-bold text-ink-400 bg-white px-1.5 py-0.5 rounded">{item.size}</span>{item.master && <span className="text-[0.6rem] text-ink-300">{item.master}</span>}{item.qc_status === 'fail' && <span className="text-[0.55rem] font-bold text-red-700 bg-red-100 px-1.5 py-0.5 rounded">FAIL</span>}{item.qc_status === 'rework' && <span className="text-[0.55rem] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">REWORK</span>}</div><div className="text-[0.6rem] text-ink-300 mt-1 font-mono">{item.full_sku}</div>{item.dispatch_destination && <div className="text-[0.55rem] text-emerald-700 font-semibold mt-1">📦 {item.dispatch_destination}</div>}</>)}
+                  {item.isBatch ? (<><div className="flex items-center gap-2 mt-1.5 flex-wrap"><span className="text-[0.65rem] font-bold text-white bg-ak-900 px-2 py-0.5 rounded">BATCH</span><span className="text-[0.6rem] text-ink-400">{item.total_units} units</span>{item.fabric_yards?.total && <span className="text-[0.6rem] text-ink-400">{item.fabric_yards.total} yds</span>}</div>{item.shopify_order_name && <div className="text-[0.6rem] text-blue-600 mt-1">#{item.shopify_order_name}</div>}{item.master && <div className="text-[0.6rem] text-ink-300 mt-0.5">{item.master}</div>}</>) : (<><div className="flex items-center gap-2 mt-1.5 flex-wrap"><span className="text-[0.65rem] font-bold text-ink-400 bg-white px-1.5 py-0.5 rounded">{item.size}</span>{item.master && <span className="text-[0.6rem] text-ink-300">{item.master}</span>}</div><div className="text-[0.6rem] text-ink-300 mt-1 font-mono">{item.full_sku}</div>{item.dispatch_destination && <div className="text-[0.55rem] text-emerald-700 font-semibold mt-1">📦 {item.dispatch_destination}</div>}</>)}
                 </div>
                 {editingId === item.id && canE && (<div className="mt-2 pt-2 border-t border-sand-200 space-y-2" onClick={e => e.stopPropagation()}>
                   {!item.isBatch && (<div><div className="text-[0.55rem] font-bold text-ink-400 uppercase mb-1">Size</div><div className="flex gap-1">{SIZES.map(s => (<button key={s} onClick={() => setEditSize(s)} className={'flex-1 py-1 text-[0.65rem] font-bold rounded-md border ' + (editSize === s ? 'border-ak-900 bg-ak-100 text-ak-900' : 'border-sand-200 text-ink-400')}>{s}</button>))}</div></div>)}
@@ -279,7 +259,7 @@ export default function ProductionPage() {
                 </div>)}
                 {canE && editingId !== item.id && (<div className="flex gap-1 mt-2">
                   {STAGES.indexOf(stage) > 0 && <button onClick={() => item.isBatch ? moveOrder(item, -1) : moveCard(item, -1)} className="flex-1 text-[0.65rem] font-bold text-ink-500 bg-sand-100 border border-sand-200 rounded-lg py-1.5 hover:bg-sand-200">← Back</button>}
-                  {stage !== 'Dispatched' && <button onClick={() => item.isBatch ? moveOrder(item, 1) : moveCard(item, 1)} className="flex-1 text-[0.65rem] font-bold text-ak-900 bg-white border border-ak-900/20 rounded-lg py-1.5 hover:bg-ak-100">{item.isBatch && item.current_stage === SPLIT_AFTER ? 'Split →' : item.current_stage === 'QC' ? 'QC →' : 'Move →'}</button>}
+                  {stage !== 'Dispatched' && <button onClick={() => item.isBatch ? moveOrder(item, 1) : moveCard(item, 1)} className="flex-1 text-[0.65rem] font-bold text-ak-900 bg-white border border-ak-900/20 rounded-lg py-1.5 hover:bg-ak-100">{item.isBatch && item.current_stage === SPLIT_AFTER ? 'Split →' : 'Move →'}</button>}
                   <button onClick={() => setConfirmDel(item)} className="text-[0.65rem] font-bold text-red-400 hover:text-red-600 px-1.5">✕</button>
                 </div>)}
               </div>
@@ -288,7 +268,7 @@ export default function ProductionPage() {
         </div>))}</div>
       ) : view === 'list' ? (
         <div className="bg-white rounded-2xl border border-sand-200 p-5">{allItems.length === 0 ? <p className="text-sm text-ink-300 py-8 text-center">No items</p> : (
-          <table className="ak-table"><thead><tr><th>Product</th><th>Type</th><th>Size</th><th>Stage</th><th>Master</th><th>Due</th><th>QC</th><th>Dispatch</th><th>Date</th>{canE && <th className="text-right">Actions</th>}</tr></thead>
+          <table className="ak-table"><thead><tr><th>Product</th><th>Type</th><th>Size</th><th>Stage</th><th>Master</th><th>Due</th><th>Dispatch</th><th>Date</th>{canE && <th className="text-right">Actions</th>}</tr></thead>
           <tbody>{allItems.map(item => { const due = dueBadge(getDueDate(item)); return (<tr key={item.id}>
             <td className="font-semibold">{item.product_label || '—'}</td>
             <td><span className={'stage-badge ' + (item.isBatch ? 'bg-ak-100 text-ak-900' : 'bg-sand-200 text-ink-600')}>{item.isBatch ? 'Batch' : 'Unit'}</span></td>
@@ -296,7 +276,6 @@ export default function ProductionPage() {
             <td><span className={'stage-badge ' + (item.current_stage === 'Dispatched' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800')}>{item.current_stage}</span></td>
             <td className="text-ink-400 text-sm">{item.master || '—'}</td>
             <td>{due ? <span className={'text-[0.6rem] font-bold px-1.5 py-0.5 rounded-full ' + due.c}>{due.t}</span> : '—'}</td>
-            <td>{item.qc_status ? <span className={'text-[0.6rem] font-bold px-1.5 py-0.5 rounded-full ' + (item.qc_status==='pass'?'bg-emerald-100 text-emerald-800':item.qc_status==='fail'?'bg-red-100 text-red-800':'bg-amber-100 text-amber-800')}>{item.qc_status}</span> : '—'}</td>
             <td className="text-xs">{item.dispatch_destination || '—'}</td>
             <td className="text-xs text-ink-400">{item.order_date || item.created_at?.slice(0,10)}</td>
             {canE && (<td className="text-right"><div className="flex gap-1 justify-end"><button onClick={() => item.isBatch ? moveOrder(item,-1) : moveCard(item,-1)} className="text-[0.6rem] font-bold bg-sand-100 text-ink-500 px-2 py-1 rounded-lg">←</button><button onClick={() => item.isBatch ? moveOrder(item,1) : moveCard(item,1)} className="text-[0.6rem] font-bold bg-emerald-100 text-emerald-800 px-2 py-1 rounded-lg">→</button><button onClick={() => setConfirmDel(item)} className="text-[0.6rem] font-bold bg-red-100 text-red-700 px-2 py-1 rounded-lg">✕</button></div></td>)}
