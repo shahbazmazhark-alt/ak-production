@@ -8,9 +8,9 @@ import { useAuth } from '@/components/AuthProvider'
 const PURPOSES = ['Stock', 'Sample', 'Online Order', 'Mixed']
 const SPLIT_AFTER = 'Dyeing'
 const STAGE_WORKERS = {
-  'Fabric Cut': 'Dilshad', 'Dyeing': 'Amir',
+  'Cutting': 'Dilshad', 'Dyeing': 'Amir',
   'Computer Embroidery': ['Sikandar', 'Shafeeq'], 'Hand Embroidery': ['Ashfaq', 'Honey'],
-  'Stitching': ['Safdar', 'Qadir'], 'QC': 'Umer', 'Packed': 'Khizar', 'Dispatched': 'Khizar',
+  'QC': 'Umer', 'Packed': 'Khizar', 'Dispatched': 'Khizar',
 }
 const DISPATCH_TYPES = ['Store Inventory', 'Online Order', 'Custom Order', 'Gifting', 'Sample']
 const QC_OPTIONS = ['Pass', 'Fail', 'Rework']
@@ -109,7 +109,7 @@ export default function ProductionPage() {
         notes: notes || null, fabric_yards: yds ? { total: yds } : null, is_split: false, created_by: user?.id || null, due_date: dueDate || null,
       }).select().single()
       if (error) throw error
-      if (yds > 0 && firstStage === 'Fabric Cut' && product.fabrics?.length > 0) {
+      if (yds > 0 && firstStage === 'Cutting' && product.fabrics?.length > 0) {
         try { await supabase.from('fabric_usage_log').insert({ fabric: product.fabrics[0], yards: yds, type: 'Production Cut', product_label: product.label || product.name, date: today() }) } catch {}
       }
       const splitIndex = (product.production_path || STAGES).indexOf(SPLIT_AFTER)
@@ -206,7 +206,7 @@ export default function ProductionPage() {
   const kanbanItems = useMemo(() => { const s = {}; STAGES.forEach(x => s[x] = []); filteredOrders.filter(o => !o.is_split).forEach(o => { if (s[o.current_stage]) s[o.current_stage].push({ ...o, isBatch: true, type: 'order' }) }); filteredCards.forEach(c => { if (s[c.current_stage]) s[c.current_stage].push({ ...c, isBatch: false, type: 'card' }) }); return s }, [filteredOrders, filteredCards])
   const allItems = useMemo(() => { const i = []; filteredOrders.filter(o => !o.is_split).forEach(o => i.push({ ...o, type: 'order', isBatch: true })); filteredCards.forEach(c => i.push({ ...c, type: 'card', isBatch: false })); return i.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')) }, [filteredOrders, filteredCards])
 
-  const sc = { 'Fabric Cut': 'border-l-amber-500 bg-amber-50', 'Dyeing': 'border-l-blue-500 bg-blue-50', 'Adda': 'border-l-purple-500 bg-purple-50', 'Computer Embroidery': 'border-l-cyan-500 bg-cyan-50', 'Hand Embroidery': 'border-l-pink-500 bg-pink-50', 'Stitching': 'border-l-orange-500 bg-orange-50', 'QC': 'border-l-yellow-500 bg-yellow-50', 'Packed': 'border-l-emerald-500 bg-emerald-50', 'Dispatched': 'border-l-green-600 bg-green-50' }
+  const sc = { 'Cutting': 'border-l-amber-500 bg-amber-50', 'Dyeing': 'border-l-blue-500 bg-blue-50', 'Adda Work': 'border-l-purple-500 bg-purple-50', 'Computer Embroidery': 'border-l-cyan-500 bg-cyan-50', 'Hand Embroidery': 'border-l-pink-500 bg-pink-50', 'Stitching': 'border-l-orange-500 bg-orange-50', 'QC': 'border-l-yellow-500 bg-yellow-50', 'Packed': 'border-l-emerald-500 bg-emerald-50', 'Dispatched': 'border-l-green-600 bg-green-50' }
   const canE = can(user, 'canEdit', 'production')
 
   return (
