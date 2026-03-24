@@ -48,6 +48,7 @@ export default function ProductsPage() {
   const allFabrics = [...new Set([...DEFAULT_FABRICS, ...products.flatMap(p => p.fabrics || [])])].sort()
 
   const filtered = products.filter(p => {
+    if (!p.is_active) return false
     if (search && !(p.name?.toLowerCase().includes(search.toLowerCase()) || p.label?.toLowerCase().includes(search.toLowerCase()) || p.base_sku?.toLowerCase().includes(search.toLowerCase()))) return false
     if (filterCol && p.collection !== filterCol) return false
     if (filterType && p.type !== filterType) return false
