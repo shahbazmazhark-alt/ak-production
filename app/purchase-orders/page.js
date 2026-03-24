@@ -42,6 +42,7 @@ export default function PurchaseOrdersPage() {
   const canManagePO = can(user, 'canEdit', 'purchase_orders')
   const canCreatePO = can(user, 'canCreate', 'purchase_orders') || canManagePO
   const canDeletePO = can(user, 'canDelete', 'purchase_orders')
+  const canApprovePO = can(user, 'canApprove', 'purchase_orders')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -73,7 +74,7 @@ export default function PurchaseOrdersPage() {
 
   async function savePO(e) {
     e.preventDefault()
-    if (!description.trim()) return toast('Description is required', 'error')
+    if (!description.trim() && poType === 'General Expense') return toast('Description is required for General Expense', 'error')
     setSaving(true)
     try {
       const totalAmount = poType === 'Fabric Purchase' ? Number(fabricYards) * Number(fabricRate) : Number(amount)
@@ -220,12 +221,12 @@ export default function PurchaseOrdersPage() {
             )}
             {cleanNotes && <div className="bg-sand-50 rounded-xl p-4"><div className="text-[0.6rem] font-bold text-ink-400 uppercase mb-1">Notes</div><div className="text-sm text-ink-600 whitespace-pre-wrap">{cleanNotes}</div></div>}
             <div className="text-xs text-ink-300 pt-2">Submitted by {po.submitted_by_name || '—'} on {po.created_at?.slice(0, 10)}</div>
-            {canManagePO && (
+            {(canManagePO || canApprovePO) && (
               <div className="flex gap-2 pt-2">
-                {po.status === 'Pending' && <button onClick={() => updateStatus(po, 'Approved')} className="flex-1 text-sm font-bold bg-blue-100 text-blue-800 py-2.5 rounded-xl hover:bg-blue-200">Approve</button>}
-                {(po.status === 'Pending' || po.status === 'Approved') && <button onClick={() => updateStatus(po, 'Received')} className="flex-1 text-sm font-bold bg-emerald-100 text-emerald-800 py-2.5 rounded-xl hover:bg-emerald-200">Received</button>}
-                {po.status === 'Received' && <button onClick={() => updateStatus(po, 'Paid')} className="flex-1 text-sm font-bold bg-purple-100 text-purple-800 py-2.5 rounded-xl hover:bg-purple-200">Mark Paid</button>}
-                {po.status !== 'Rejected' && po.status !== 'Paid' && <button onClick={() => updateStatus(po, 'Rejected')} className="flex-1 text-sm font-bold bg-red-100 text-red-800 py-2.5 rounded-xl hover:bg-red-200">Reject</button>}
+                {canApprovePO && po.status === 'Pending' && <button onClick={() => updateStatus(po, 'Approved')} className="flex-1 text-sm font-bold bg-blue-100 text-blue-800 py-2.5 rounded-xl hover:bg-blue-200">Approve</button>}
+                {canManagePO && (po.status === 'Pending' || po.status === 'Approved') && <button onClick={() => updateStatus(po, 'Received')} className="flex-1 text-sm font-bold bg-emerald-100 text-emerald-800 py-2.5 rounded-xl hover:bg-emerald-200">Received</button>}
+                {canManagePO && po.status === 'Received' && <button onClick={() => updateStatus(po, 'Paid')} className="flex-1 text-sm font-bold bg-purple-100 text-purple-800 py-2.5 rounded-xl hover:bg-purple-200">Mark Paid</button>}
+                {canApprovePO && po.status !== 'Rejected' && po.status !== 'Paid' && <button onClick={() => updateStatus(po, 'Rejected')} className="flex-1 text-sm font-bold bg-red-100 text-red-800 py-2.5 rounded-xl hover:bg-red-200">Reject</button>}
               </div>
             )}
           </div>
@@ -359,7 +360,7 @@ export default function PurchaseOrdersPage() {
                           <button onClick={() => printPO(po)} className="text-[0.65rem] font-bold bg-sand-100 text-ink-500 px-2 py-1 rounded-lg hover:bg-sand-200" title="Print">🖨</button>
                           {canManagePO && <button onClick={() => startEdit(po)} className="text-[0.65rem] font-bold bg-blue-50 text-blue-700 px-2 py-1 rounded-lg hover:bg-blue-100">Edit</button>}
                           {canDeletePO && <button onClick={() => setConfirmDel(po)} className="text-[0.65rem] font-bold bg-red-50 text-red-600 px-2 py-1 rounded-lg hover:bg-red-100">✕</button>}
-                          {canManagePO && po.status === 'Pending' && <button onClick={() => updateStatus(po, 'Approved')} className="text-[0.65rem] font-bold bg-blue-100 text-blue-800 px-2 py-1 rounded-lg hover:bg-blue-200">Approve</button>}
+                          {canApprovePO && po.status === 'Pending' && <button onClick={() => updateStatus(po, 'Approved')} className="text-[0.65rem] font-bold bg-blue-100 text-blue-800 px-2 py-1 rounded-lg hover:bg-blue-200">Approve</button>}
                           {canManagePO && (po.status === 'Approved' || po.status === 'Pending') && <button onClick={() => updateStatus(po, 'Received')} className="text-[0.65rem] font-bold bg-emerald-100 text-emerald-800 px-2 py-1 rounded-lg hover:bg-emerald-200">Received</button>}
                           {canManagePO && po.status === 'Received' && <button onClick={() => updateStatus(po, 'Paid')} className="text-[0.65rem] font-bold bg-purple-100 text-purple-800 px-2 py-1 rounded-lg hover:bg-purple-100">Paid</button>}
                         </div>
