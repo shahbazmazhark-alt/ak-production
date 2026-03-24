@@ -64,7 +64,7 @@ export default function ProductsPage() {
   }
 
   function startNew() {
-    setEditing({ name: '', type: 'Shirt', base_sku: '', collection: '', label: '', stitch_rate: 0, retail_price: 0, fabrics: [], production_path: [], is_active: true })
+    setEditing({ name: '', type: 'Shirt', base_sku: '', collection: '', label: '', stitch_rate: 0, stitch_master: '', retail_price: 0, fabrics: [], production_path: [], is_active: true })
     setIsNew(true)
     setBom([]); setBomEdits([])
   }
@@ -114,6 +114,7 @@ export default function ProductsPage() {
         name: editing.name, type: editing.type, base_sku: editing.base_sku,
         collection: editing.collection, label,
         stitch_rate: Number(editing.stitch_rate) || 0,
+        stitch_master: editing.stitch_master || null,
         retail_price: Number(editing.retail_price) || 0,
         fabrics: editing.fabrics, production_path: editing.production_path,
         is_active: editing.is_active, updated_at: new Date().toISOString(),
@@ -196,9 +197,18 @@ export default function ProductsPage() {
                 <input type="text" value={editing.collection} onChange={e => updateField('collection', e.target.value)} list="col-list" className="mt-1 w-full border border-sand-300 rounded-xl px-3 py-2.5 text-sm font-semibold bg-sand-50 focus:outline-none focus:ring-2 focus:ring-ak-900/20" />
                 <datalist id="col-list">{collections.map(c => <option key={c} value={c} />)}</datalist></div>
             </div>
-            <div className="grid grid-cols-3 gap-4">
-              <div><label className="text-xs font-bold text-ink-400 uppercase tracking-wider">Stitch Rate</label>
+            <div className="grid grid-cols-2 gap-4">
+              <div><label className="text-xs font-bold text-ink-400 uppercase tracking-wider">Stitch Rate (PKR)</label>
                 <input type="number" value={editing.stitch_rate} onChange={e => updateField('stitch_rate', e.target.value)} className="mt-1 w-full border border-sand-300 rounded-xl px-3 py-2.5 text-sm font-semibold bg-sand-50 focus:outline-none focus:ring-2 focus:ring-ak-900/20" /></div>
+              <div><label className="text-xs font-bold text-ink-400 uppercase tracking-wider">Stitching Master</label>
+                <select value={editing.stitch_master || ''} onChange={e => updateField('stitch_master', e.target.value)}
+                  className="mt-1 w-full border border-sand-300 rounded-xl px-3 py-2.5 text-sm font-semibold bg-sand-50 focus:outline-none focus:ring-2 focus:ring-ak-900/20">
+                  <option value="">Not assigned</option>
+                  <option value="Qadir">Qadir</option>
+                  <option value="Safdar">Safdar</option>
+                </select></div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
               <div><label className="text-xs font-bold text-ink-400 uppercase tracking-wider">Retail Price</label>
                 <input type="number" value={editing.retail_price} onChange={e => updateField('retail_price', e.target.value)} className="mt-1 w-full border border-sand-300 rounded-xl px-3 py-2.5 text-sm font-semibold bg-sand-50 focus:outline-none focus:ring-2 focus:ring-ak-900/20" /></div>
               <div><label className="text-xs font-bold text-ink-400 uppercase tracking-wider">Label</label>
