@@ -58,6 +58,11 @@ export default function ProductionPage() {
   // Delete confirmation
   const [confirmDel, setConfirmDel] = useState(null)
 
+  // Inline card edit
+  const [editingId, setEditingId] = useState(null)
+  const [editSize, setEditSize] = useState('')
+  const [editMaster, setEditMaster] = useState('')
+
   const load = useCallback(async () => {
     setLoading(true)
     const [pRes, oRes, cRes, wRes] = await Promise.all([
@@ -249,6 +254,34 @@ export default function ProductionPage() {
     toast('Deleted', 'success')
   }
 
+  // ── INLINE EDIT ──
+  function startEditCard(item) {
+    if (editingId === item.id) { setEditingId(null); return }
+    setEditingId(item.id)
+    setEditSize(item.isBatch ? '' : (item.size || 'M'))
+    setEditMaster(item.master || '')
+  }
+
+  async function saveCardEdit(item) {
+    if (item.isBatch) {
+      const updates = { master: editMaster || null, updated_at: new Date().toISOString() }
+      const { error } = await supabase.from('production_orders').update(updates).eq('id', item.id)
+      if (error) return toast(error.message, 'error')
+      setOrders(prev => prev.map(o => o.id === item.id ? { ...o, ...updates } : o))
+      // Also update master on all child unit cards
+      await supabase.from('unit_cards').update({ master: editMaster || null }).eq('order_id', item.id)
+      setCards(prev => prev.map(c => c.order_id === item.id ? { ...c, master: editMaster || null } : c))
+    } else {
+      const newSku = (item.full_sku || '').replace(/\/[A-Z]+$/, '') + '/' + editSize
+      const updates = { size: editSize, full_sku: newSku, master: editMaster || null, updated_at: new Date().toISOString() }
+      const { error } = await supabase.from('unit_cards').update(updates).eq('id', item.id)
+      if (error) return toast(error.message, 'error')
+      setCards(prev => prev.map(c => c.id === item.id ? { ...c, ...updates } : c))
+    }
+    setEditingId(null)
+    toast('Updated', 'success')
+  }
+
   // ── KANBAN DATA ──
   const kanbanItems = useMemo(() => {
     const byStage = {}
@@ -379,27 +412,61 @@ export default function ProductionPage() {
                 )}
                 {(kanbanItems[stage] || []).map(item => (
                   <div key={item.id} className={'border-l-4 ' + (stageColors[stage] || 'border-l-gray-400 bg-gray-50') + ' rounded-xl p-3 shadow-sm'}>
-                    <div className="text-sm font-bold text-ink-800 leading-tight">{item.product_label || '—'}</div>
-                    {item.isBatch ? (
-                      <>
-                        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                          <span className="text-[0.65rem] font-bold text-white bg-ak-900 px-2 py-0.5 rounded">BATCH</span>
-                          <span className="text-[0.6rem] text-ink-400">{item.total_units} units</span>
-                          {item.fabric_yards?.total && <span className="text-[0.6rem] text-ink-400">{item.fabric_yards.total} yds</span>}
+                    {/* Card header — click to edit */}
+                    <div className={canEdit ? 'cursor-pointer' : ''} onClick={() => canEdit && startEditCard(item)}>
+                      <div className="text-sm font-bold text-ink-800 leading-tight">{item.product_label || '—'}</div>
+                      {item.isBatch ? (
+                        <>
+                          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                            <span className="text-[0.65rem] font-bold text-white bg-ak-900 px-2 py-0.5 rounded">BATCH</span>
+                            <span className="text-[0.6rem] text-ink-400">{item.total_units} units</span>
+                            {item.fabric_yards?.total && <span className="text-[0.6rem] text-ink-400">{item.fabric_yards.total} yds</span>}
+                          </div>
+                          {item.shopify_order_name && <div className="text-[0.6rem] text-blue-600 mt-1">#{item.shopify_order_name}</div>}
+                          {item.master && <div className="text-[0.6rem] text-ink-300 mt-0.5">{item.master}</div>}
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-2 mt-1.5">
+                            <span className="text-[0.65rem] font-bold text-ink-400 bg-white px-1.5 py-0.5 rounded">{item.size}</span>
+                            {item.master && <span className="text-[0.6rem] text-ink-300">{item.master}</span>}
+                          </div>
+                          <div className="text-[0.6rem] text-ink-300 mt-1 font-mono">{item.full_sku}</div>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Inline edit form */}
+                    {editingId === item.id && canEdit && (
+                      <div className="mt-2 pt-2 border-t border-sand-200 space-y-2" onClick={e => e.stopPropagation()}>
+                        {!item.isBatch && (
+                          <div>
+                            <div className="text-[0.55rem] font-bold text-ink-400 uppercase mb-1">Size</div>
+                            <div className="flex gap-1">
+                              {SIZES.map(s => (
+                                <button key={s} onClick={() => setEditSize(s)}
+                                  className={'flex-1 py-1 text-[0.65rem] font-bold rounded-md border transition-all ' + (editSize === s ? 'border-ak-900 bg-ak-100 text-ak-900' : 'border-sand-200 text-ink-400')}>{s}</button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        <div>
+                          <div className="text-[0.55rem] font-bold text-ink-400 uppercase mb-1">Master</div>
+                          <select value={editMaster} onChange={e => setEditMaster(e.target.value)}
+                            className="w-full border border-sand-300 rounded-md px-2 py-1 text-[0.7rem] font-semibold bg-sand-50 focus:outline-none focus:ring-1 focus:ring-ak-900/20">
+                            <option value="">None</option>
+                            {masterList.map(w => <option key={w.id} value={w.name}>{w.name}</option>)}
+                          </select>
                         </div>
-                        {item.shopify_order_name && <div className="text-[0.6rem] text-blue-600 mt-1">#{item.shopify_order_name}</div>}
-                        {item.master && <div className="text-[0.6rem] text-ink-300 mt-0.5">{item.master}</div>}
-                      </>
-                    ) : (
-                      <>
-                        <div className="flex items-center gap-2 mt-1.5">
-                          <span className="text-[0.65rem] font-bold text-ink-400 bg-white px-1.5 py-0.5 rounded">{item.size}</span>
-                          {item.master && <span className="text-[0.6rem] text-ink-300">{item.master}</span>}
+                        <div className="flex gap-1">
+                          <button onClick={() => setEditingId(null)} className="flex-1 text-[0.6rem] font-bold text-ink-400 bg-sand-100 rounded-md py-1.5">Cancel</button>
+                          <button onClick={() => saveCardEdit(item)} className="flex-1 text-[0.6rem] font-bold text-white bg-ak-900 rounded-md py-1.5">Save</button>
                         </div>
-                        <div className="text-[0.6rem] text-ink-300 mt-1 font-mono">{item.full_sku}</div>
-                      </>
+                      </div>
                     )}
-                    {canEdit && (
+
+                    {/* Move/delete buttons */}
+                    {canEdit && editingId !== item.id && (
                       <div className="flex gap-1 mt-2">
                         {STAGES.indexOf(stage) > 0 && (
                           <button onClick={() => item.isBatch ? moveOrder(item, -1) : moveCard(item, -1)}
