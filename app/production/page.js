@@ -60,6 +60,7 @@ export default function ProductionPage() {
   const [dispatchModal, setDispatchModal] = useState(null)
   const [dispatchType, setDispatchType] = useState('Store Inventory')
   const [dispatchRef, setDispatchRef] = useState('')
+  const [dispatchTracking, setDispatchTracking] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -121,7 +122,7 @@ export default function ProductionPage() {
     const idx = path.indexOf(card.current_stage), newIdx = idx + dir
     if (newIdx < 0 || newIdx >= path.length) return toast(dir > 0 ? 'Last stage' : 'First stage', 'error')
     const ns = path[newIdx]
-    if (dir > 0 && ns === 'Dispatched') { setDispatchModal({ item: card, nextStage: ns }); setDispatchType('Store Inventory'); setDispatchRef(''); return }
+    if (dir > 0 && ns === 'Dispatched') { setDispatchModal({ item: card, nextStage: ns }); setDispatchType('Store Inventory'); setDispatchRef(''); setDispatchTracking(''); return }
     if (dir > 0 && Array.isArray(STAGE_WORKERS[ns])) { setWorkerPick({ item: card, direction: dir, nextStage: ns, workers: STAGE_WORKERS[ns] }); return }
     // Auto-assign: check STAGE_WORKERS first, then product's stitch_master for Stitching
     let aw = typeof STAGE_WORKERS[ns] === 'string' ? STAGE_WORKERS[ns] : null
@@ -143,7 +144,7 @@ export default function ProductionPage() {
     if (newIdx < 0 || newIdx >= path.length) return
     const ns = path[newIdx]
     if (dir > 0 && (order.current_stage === SPLIT_AFTER || path[idx] === SPLIT_AFTER)) { const sizes = order.sizes || {}; setSplitQty({ XS: Number(sizes.XS||0), S: Number(sizes.S||0), M: Number(sizes.M||0), L: Number(sizes.L||0) }); setSplitOrder({ ...order, _nextStage: ns }); return }
-    if (dir > 0 && ns === 'Dispatched') { setDispatchModal({ item: { ...order, isBatch: true, type: 'order' }, nextStage: ns }); setDispatchType('Store Inventory'); setDispatchRef(''); return }
+    if (dir > 0 && ns === 'Dispatched') { setDispatchModal({ item: { ...order, isBatch: true, type: 'order' }, nextStage: ns }); setDispatchType('Store Inventory'); setDispatchRef(''); setDispatchTracking(''); return }
     if (dir > 0 && Array.isArray(STAGE_WORKERS[ns])) { setWorkerPick({ item: { ...order, isBatch: true, type: 'order' }, direction: dir, nextStage: ns, workers: STAGE_WORKERS[ns] }); return }
     let aw = typeof STAGE_WORKERS[ns] === 'string' ? STAGE_WORKERS[ns] : null
     if (ns === 'Stitching' && product?.stitch_master) aw = product.stitch_master
@@ -169,7 +170,9 @@ export default function ProductionPage() {
   }
 
   async function confirmDispatch() {
-    if (!dispatchModal) return; const { item, nextStage: ns } = dispatchModal; const dest = dispatchType + (dispatchRef ? ': ' + dispatchRef : ''); setDispatchModal(null)
+    if (!dispatchModal) return; const { item, nextStage: ns } = dispatchModal
+    const parts = [dispatchType]; if (dispatchRef) parts.push(dispatchRef); if (dispatchTracking) parts.push('Tracking: ' + dispatchTracking)
+    const dest = parts.join(': '); setDispatchModal(null)
     if (item.type === 'order' || item.isBatch) { await doMoveOrder(item, ns, 1, 'Khizar', { dispatch_destination: dest }); await supabase.from('unit_cards').update({ current_stage: ns, dispatch_destination: dest, updated_at: new Date().toISOString() }).eq('order_id', item.id) }
     else await doMoveCard(item, ns, 1, 'Khizar', { dispatch_destination: dest })
   }
@@ -208,10 +211,19 @@ export default function ProductionPage() {
 
       {dispatchModal && (<div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[90]" onClick={() => setDispatchModal(null)}><div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
         <h3 className="text-lg font-extrabold text-ink-900 mb-1">Dispatch destination</h3>
-        <p className="text-xs text-ink-400 mb-4"><span className="font-bold text-ink-700">{dispatchModal.item.product_label}</span></p>
+        <p className="text-xs text-ink-400 mb-4"><span className="font-bold text-ink-700">{dispatchModal.item.product_label}</span>{dispatchModal.item.size && <span> — {dispatchModal.item.size}</span>}</p>
         <div className="space-y-3 mb-4">
           <div className="flex flex-wrap gap-2">{DISPATCH_TYPES.map(t => (<button key={t} onClick={() => setDispatchType(t)} className={'px-3 py-1.5 rounded-lg text-xs font-bold border-2 transition-all ' + (dispatchType === t ? 'border-ak-900 bg-ak-100 text-ak-900' : 'border-sand-200 text-ink-400')}>{t}</button>))}</div>
-          {(dispatchType === 'Online Order' || dispatchType === 'Custom Order') && (<input type="text" value={dispatchRef} onChange={e => setDispatchRef(e.target.value)} placeholder={dispatchType === 'Online Order' ? 'Order # (e.g. #1045)' : 'Customer name or details'} className="w-full border border-sand-300 rounded-xl px-3 py-2.5 text-sm font-semibold bg-sand-50 focus:outline-none focus:ring-2 focus:ring-ak-900/20" />)}
+          {dispatchType === 'Online Order' && (<>
+            <div><label className="text-[0.6rem] font-bold text-blue-700 uppercase tracking-wider">Shopify order #</label>
+              <input type="text" value={dispatchRef} onChange={e => setDispatchRef(e.target.value)} placeholder="#1045" className="w-full border border-blue-300 rounded-xl px-3 py-2.5 text-sm font-semibold bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-400/40 mt-1" /></div>
+            <div><label className="text-[0.6rem] font-bold text-ink-400 uppercase tracking-wider">Courier / tracking #</label>
+              <input type="text" value={dispatchTracking} onChange={e => setDispatchTracking(e.target.value)} placeholder="TCS / Leopard / tracking number" className="w-full border border-sand-300 rounded-xl px-3 py-2.5 text-sm font-semibold bg-sand-50 focus:outline-none focus:ring-2 focus:ring-ak-900/20 mt-1" /></div>
+          </>)}
+          {dispatchType === 'Custom Order' && (
+            <div><label className="text-[0.6rem] font-bold text-ink-400 uppercase tracking-wider">Customer / details</label>
+              <input type="text" value={dispatchRef} onChange={e => setDispatchRef(e.target.value)} placeholder="Customer name or details" className="w-full border border-sand-300 rounded-xl px-3 py-2.5 text-sm font-semibold bg-sand-50 focus:outline-none focus:ring-2 focus:ring-ak-900/20 mt-1" /></div>
+          )}
         </div>
         <div className="flex gap-3"><button onClick={() => setDispatchModal(null)} className="flex-1 py-2.5 text-sm font-bold text-ink-500 bg-sand-100 rounded-xl">Cancel</button><button onClick={confirmDispatch} className="flex-1 py-2.5 text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700">Dispatch →</button></div>
       </div></div>)}
