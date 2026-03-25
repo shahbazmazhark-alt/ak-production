@@ -12,6 +12,7 @@ const NAV = [
   { href: '/purchase-orders',   label: 'POs',             icon: '⊞' },
   { href: '/fabric-inventory',  label: 'Fabric',          icon: '◫' },
   { href: '/loans',             label: 'Loans',           icon: '⊡' },
+  { href: '/reports',           label: 'Reports',         icon: '◈' },
 ]
 
 export default function Sidebar() {
